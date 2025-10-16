@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PS3 Rental Timer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: Arial, sans-serif; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center;
+            color: white;
+            overflow: hidden;
+        }
+        .locked-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+        }
+        .lock-icon {
+            font-size: 120px;
+            margin-bottom: 30px;
+            animation: pulse 2s infinite;
+        }
+        .lock-message {
+            font-size: 36px;
+            text-align: center;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+        .lock-submessage {
+            font-size: 18px;
+            text-align: center;
+            opacity: 0.8;
+        }
+        .timer-container { 
+            text-align: center; 
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 60px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        .tv-title { 
+            font-size: 36px; 
+            margin-bottom: 20px; 
+            font-weight: 300;
+            opacity: 0.9;
+        }
+        .timer { 
+            font-size: 120px; 
+            font-weight: bold; 
+            margin: 40px 0;
+            text-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            font-family: 'Courier New', monospace;
+        }
+        .status { 
+            font-size: 28px; 
+            padding: 15px 30px; 
+            border-radius: 50px; 
+            display: inline-block;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        .status.active { 
+            background: rgba(76, 175, 80, 0.8); 
+            animation: pulse 2s infinite;
+        }
+        .status.paused { 
+            background: rgba(255, 152, 0, 0.8); 
+        }
+        .status.stopped { 
+            background: rgba(244, 67, 54, 0.8); 
+        }
+        .warning { 
+            color: #ff6b6b; 
+            animation: blink 1s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.3; }
+        }
+        .connection-status {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        .connected { background: rgba(76, 175, 80, 0.8); }
+        .disconnected { background: rgba(244, 67, 54, 0.8); }
+    </style>
+</head>
+<body>
+    <div class="connection-status" id="connectionStatus">Menghubungkan...</div>
+    <div class="timer-container">
+        <div class="tv-title" id="tvTitle">PlayStation 3</div>
+        <div class="timer" id="timer">00:00:00</div>
+        <div class="status stopped" id="status">MENUNGGU</div>
+    </div>
+    <!-- Lock overlay will be added dynamically -->
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let tvId = null;
+        let currentTime = 0;
+        let currentStatus = 'stopped';
+        let isLocked = true;
+
+        // Get TV ID from URL
+        function getTVId() {
+            const path = window.location.pathname;
+            const match = path.match(/\/tv\/(\d+)/);
+            return match ? parseInt(match[1]) : 1;
+        }
+
+        // Format time display
+        function formatTime(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        // Show/hide lock overlay
+        function updateLockDisplay() {
+            let overlay = document.getElementById('lockOverlay');
+            
+            if (isLocked) {
+                if (!overlay) {
+                    overlay = document.createElement('div');
+                    overlay.id = 'lockOverlay';
+                    overlay.className = 'locked-overlay';
+                    overlay.innerHTML = `
+                        <div class="lock-icon">🔒</div>
+                        <div class="lock-message">TV TERKUNCI</div>
+                        <div class="lock-submessage">Hubungi admin untuk memulai sesi bermain</div>
+                        <div class="lock-submessage" style="margin-top: 20px;">PlayStation 3 - TV ${tvId}</div>
+                    `;
+                    document.body.appendChild(overlay);
+                }
+                overlay.style.display = 'flex';
+            } else {
+                if (overlay) {
+                    overlay.style.display = 'none';
+                }
+            }
+        }
+
+        // Update display
+        function updateDisplay() {
+            const timer = document.getElementById('timer');
+            const status = document.getElementById('status');
+            const tvTitle = document.getElementById('tvTitle');
+            
+            timer.textContent = formatTime(currentTime);
+            tvTitle.textContent = `PlayStation 3 - TV ${tvId}`;
+            
+            // Add warning class if time is running low (less than 5 minutes)
+            if (currentTime <= 300 && currentTime > 0 && currentStatus === 'active') {
+                timer.className = 'timer warning';
+            } else {
+                timer.className = 'timer';
+            }
+            
+            status.className = `status ${currentStatus}`;
+            switch(currentStatus) {
+                case 'active':
+                    status.textContent = 'SEDANG BERMAIN';
+                    break;
+                case 'paused':
+                    status.textContent = 'DIJEDA';
+                    break;
+                case 'stopped':
+                    status.textContent = currentTime > 0 ? 'WAKTU HABIS' : 'MENUNGGU';
+                    break;
+            }
+            
+            updateLockDisplay();
+        }
+
+        // Connection status
+        function updateConnectionStatus(connected) {
+            const connectionStatus = document.getElementById('connectionStatus');
+            if (connected) {
+                connectionStatus.textContent = 'Terhubung';
+                connectionStatus.className = 'connection-status connected';
+            } else {
+                connectionStatus.textContent = 'Terputus';
+                connectionStatus.className = 'connection-status disconnected';
+            }
+        }
+
+        // Socket event listeners
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            updateConnectionStatus(true);
+            tvId = getTVId();
+            socket.emit('register-tv', tvId);
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+            updateConnectionStatus(false);
+        });
+
+        socket.on('session-update', (data) => {
+            if (data.tvId === tvId) {
+                currentTime = data.remainingTime;
+                currentStatus = data.status;
+                updateDisplay();
+            }
+        });
+
+        socket.on('timer-update', (data) => {
+            if (data.tvId === tvId) {
+                currentTime = data.remainingTime;
+                updateDisplay();
+            }
+        });
+        
+        socket.on('tv-lock-update', (data) => {
+            if (data.tvId === tvId) {
+                isLocked = data.locked;
+                updateDisplay();
+            }
+        });
+
+        // Initialize display
+        tvId = getTVId();
+        updateDisplay();
+        
+        // Prevent right-click and key shortcuts when locked
+        document.addEventListener('contextmenu', (e) => {
+            if (isLocked) e.preventDefault();
+        });
+        
+        document.addEventListener('keydown', (e) => {
+            if (isLocked) {
+                // Block common shortcuts
+                if (e.key === 'F12' || e.key === 'F5' || 
+                    (e.ctrlKey && (e.key === 'r' || e.key === 'R' || e.key === 'u' || e.key === 'U')) ||
+                    (e.altKey && e.key === 'F4')) {
+                    e.preventDefault();
+                }
+            }
+        });
+
+        // Auto-refresh page if disconnected for too long
+        let disconnectTime = null;
+        socket.on('disconnect', () => {
+            disconnectTime = Date.now();
+        });
+
+        socket.on('connect', () => {
+            if (disconnectTime && Date.now() - disconnectTime > 30000) {
+                location.reload();
+            }
+            disconnectTime = null;
+        });
+
+        // Prevent screen sleep (for Smart TVs)
+        let wakeLock = null;
+        if ('wakeLock' in navigator) {
+            navigator.wakeLock.request('screen').then(lock => {
+                wakeLock = lock;
+            }).catch(err => {
+                console.log('Wake lock failed:', err);
+            });
+        }
+
+        // Keep screen active with periodic activity
+        setInterval(() => {
+            if (document.hidden) return;
+            
+            // Trigger a small visual change to prevent sleep
+            const timer = document.getElementById('timer');
+            if (timer) {
+                timer.style.textShadow = '0 4px 8px rgba(0,0,0,0.3)';
+                setTimeout(() => {
+                    timer.style.textShadow = '0 4px 8px rgba(0,0,0,0.3)';
+                }, 100);
+            }
+        }, 30000);
+        
+        // Block navigation when locked
+        window.addEventListener('beforeunload', (e) => {
+            if (isLocked && currentStatus !== 'active') {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
+    </script>
+</body>
+</html>

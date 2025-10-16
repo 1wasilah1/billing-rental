@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - PS3 Rental</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { text-align: center; color: #333; margin-bottom: 30px; }
+        .tv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        .tv-card { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .tv-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .tv-title { font-size: 18px; font-weight: bold; color: #333; }
+        .status { padding: 5px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; }
+        .status.active { background: #4CAF50; color: white; }
+        .status.paused { background: #FF9800; color: white; }
+        .status.stopped { background: #f44336; color: white; }
+        .timer { font-size: 24px; font-weight: bold; text-align: center; margin: 15px 0; color: #333; }
+        .controls { display: flex; gap: 10px; flex-wrap: wrap; }
+        .btn { padding: 8px 15px; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; }
+        .btn-start { background: #4CAF50; color: white; }
+        .btn-pause { background: #FF9800; color: white; }
+        .btn-resume { background: #2196F3; color: white; }
+        .btn-stop { background: #f44336; color: white; }
+        .btn-extend { background: #9C27B0; color: white; }
+        .btn-lock { background: #607D8B; color: white; }
+        .btn-unlock { background: #4CAF50; color: white; }
+        .input-group { margin: 10px 0; }
+        .input-group input { padding: 8px; border: 1px solid #ddd; border-radius: 4px; width: 80px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Dashboard Admin - Rental PlayStation 3</h1>
+        <div class="tv-grid" id="tvGrid">
+            <!-- TV cards will be generated here -->
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const tvData = new Map();
+
+        // Initialize TV cards
+        function initializeTVs() {
+            const grid = document.getElementById('tvGrid');
+            for (let i = 1; i <= 5; i++) {
+                tvData.set(i, { remainingTime: 0, status: 'stopped', locked: true });
+                
+                const card = document.createElement('div');
+                card.className = 'tv-card';
+                card.innerHTML = `
+                    <div class="tv-header">
+                        <div class="tv-title">PlayStation 3 - TV ${i}</div>
+                        <div class="status stopped" id="status-${i}">BERHENTI</div>
+                    </div>
+                    <div class="timer" id="timer-${i}">00:00:00</div>
+                    <div class="input-group">
+                        <input type="number" id="duration-${i}" placeholder="Menit" min="1" value="60">
+                        <input type="number" id="extend-${i}" placeholder="Tambah" min="1" value="30">
+                    </div>
+                    <div class="controls">
+                        <button class="btn btn-start" onclick="startSession(${i})">Mulai</button>
+                        <button class="btn btn-pause" onclick="pauseSession(${i})">Jeda</button>
+                        <button class="btn btn-resume" onclick="resumeSession(${i})">Lanjut</button>
+                        <button class="btn btn-extend" onclick="extendSession(${i})">Perpanjang</button>
+                        <button class="btn btn-stop" onclick="stopSession(${i})">Stop</button>
+                    </div>
+                    <div class="controls" style="margin-top: 10px;">
+                        <button class="btn" id="lock-btn-${i}" onclick="toggleLock(${i})">🔒 Kunci TV</button>
+                    </div>
+                `;
+                grid.appendChild(card);
+            }
+        }
+
+        // Format time display
+        function formatTime(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        // Update TV display
+        function updateTVDisplay(tvId, data) {
+            const timer = document.getElementById(`timer-${tvId}`);
+            const status = document.getElementById(`status-${tvId}`);
+            const lockBtn = document.getElementById(`lock-btn-${tvId}`);
+            
+            timer.textContent = formatTime(data.remainingTime);
+            
+            status.className = `status ${data.status}`;
+            switch(data.status) {
+                case 'active':
+                    status.textContent = 'AKTIF';
+                    break;
+                case 'paused':
+                    status.textContent = 'JEDA';
+                    break;
+                case 'stopped':
+                    status.textContent = 'BERHENTI';
+                    break;
+            }
+            
+            // Update lock button
+            if (data.locked) {
+                lockBtn.textContent = '🔓 Buka Kunci';
+                lockBtn.className = 'btn btn-unlock';
+            } else {
+                lockBtn.textContent = '🔒 Kunci TV';
+                lockBtn.className = 'btn btn-lock';
+            }
+        }
+
+        // API calls
+        async function startSession(tvId) {
+            const duration = document.getElementById(`duration-${tvId}`).value;
+            if (!duration || duration < 1) {
+                alert('Masukkan durasi yang valid!');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/start-session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tvId, duration: parseInt(duration) })
+                });
+                const result = await response.json();
+                if (!result.success) {
+                    alert('Gagal memulai session: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        async function pauseSession(tvId) {
+            try {
+                const response = await fetch('/api/pause-session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tvId })
+                });
+                const result = await response.json();
+                if (!result.success) {
+                    alert('Gagal menjeda session: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        async function resumeSession(tvId) {
+            try {
+                const response = await fetch('/api/resume-session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tvId })
+                });
+                const result = await response.json();
+                if (!result.success) {
+                    alert('Gagal melanjutkan session: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        async function extendSession(tvId) {
+            const additionalMinutes = document.getElementById(`extend-${tvId}`).value;
+            if (!additionalMinutes || additionalMinutes < 1) {
+                alert('Masukkan waktu perpanjangan yang valid!');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/extend-session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tvId, additionalMinutes: parseInt(additionalMinutes) })
+                });
+                const result = await response.json();
+                if (!result.success) {
+                    alert('Gagal memperpanjang session: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        async function stopSession(tvId) {
+            try {
+                const response = await fetch('/api/stop-session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tvId })
+                });
+                const result = await response.json();
+                if (!result.success) {
+                    alert('Gagal menghentikan session: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        // Toggle lock/unlock TV
+        async function toggleLock(tvId) {
+            const currentData = tvData.get(tvId);
+            const endpoint = currentData.locked ? '/api/unlock-tv' : '/api/lock-tv';
+            
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tvId })
+                });
+                const result = await response.json();
+                if (!result.success) {
+                    alert('Gagal mengubah status kunci TV: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        // Socket event listeners
+        socket.on('session-update', (data) => {
+            const currentData = tvData.get(data.tvId) || {};
+            tvData.set(data.tvId, { ...currentData, ...data });
+            updateTVDisplay(data.tvId, tvData.get(data.tvId));
+        });
+
+        socket.on('timer-update', (data) => {
+            const currentData = tvData.get(data.tvId) || {};
+            tvData.set(data.tvId, { ...currentData, remainingTime: data.remainingTime });
+            updateTVDisplay(data.tvId, tvData.get(data.tvId));
+        });
+        
+        socket.on('tv-lock-update', (data) => {
+            const currentData = tvData.get(data.tvId) || {};
+            tvData.set(data.tvId, { ...currentData, locked: data.locked });
+            updateTVDisplay(data.tvId, tvData.get(data.tvId));
+        });
+
+        // Initialize on page load
+        initializeTVs();
+        
+        // Update displays initially
+        for (let i = 1; i <= 5; i++) {
+            updateTVDisplay(i, tvData.get(i));
+        }
+
+        // Load existing sessions and TV status
+        Promise.all([
+            fetch('/api/sessions').then(r => r.json()),
+            fetch('/api/tv-status').then(r => r.json())
+        ]).then(([sessions, tvStatus]) => {
+            // Update with TV status first
+            tvStatus.forEach(tv => {
+                const currentData = tvData.get(tv.tvId) || {};
+                tvData.set(tv.tvId, { ...currentData, locked: tv.locked });
+            });
+            
+            // Then update with session data
+            sessions.forEach(session => {
+                const currentData = tvData.get(session.tvId) || {};
+                tvData.set(session.tvId, { ...currentData, ...session });
+            });
+            
+            // Update all displays
+            for (let i = 1; i <= 5; i++) {
+                updateTVDisplay(i, tvData.get(i));
+            }
+        });
+    </script>
+</body>
+</html>
