@@ -108,17 +108,55 @@
             font-size: 14px;
             font-weight: bold;
         }
+        .pip-mode {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            width: 300px;
+            height: 200px;
+            background: rgba(0,0,0,0.9);
+            border-radius: 15px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+            border: 2px solid #fff;
+        }
+        .pip-timer { font-size: 36px; font-weight: bold; color: white; }
+        .pip-status { font-size: 14px; margin-top: 10px; }
+        .pip-toggle {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 10px 20px;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            z-index: 10001;
+        }
         .connected { background: rgba(76, 175, 80, 0.8); }
         .disconnected { background: rgba(244, 67, 54, 0.8); }
     </style>
 </head>
 <body>
     <div class="connection-status" id="connectionStatus">Menghubungkan...</div>
-    <div class="timer-container">
+    <div class="timer-container" id="mainContainer">
         <div class="tv-title" id="tvTitle">PlayStation 3</div>
         <div class="timer" id="timer">00:00:00</div>
         <div class="status stopped" id="status">MENUNGGU</div>
     </div>
+    
+    <!-- PiP Mode -->
+    <div class="pip-mode" id="pipContainer" style="display: none;">
+        <div class="pip-timer" id="pipTimer">00:00:00</div>
+        <div class="pip-status" id="pipStatus">MENUNGGU</div>
+    </div>
+    
+    <button class="pip-toggle" id="pipToggle" onclick="togglePiP()">📺 PiP Mode</button>
+    
     <!-- Lock overlay will be added dynamically -->
 
     <script src="/socket.io/socket.io.js"></script>
@@ -169,34 +207,64 @@
             }
         }
 
+        // Toggle PiP Mode
+        function togglePiP() {
+            const mainContainer = document.getElementById('mainContainer');
+            const pipContainer = document.getElementById('pipContainer');
+            const pipToggle = document.getElementById('pipToggle');
+            
+            if (pipContainer.style.display === 'none') {
+                mainContainer.style.display = 'none';
+                pipContainer.style.display = 'flex';
+                pipToggle.textContent = '🖥️ Full Mode';
+                document.body.style.background = 'transparent';
+            } else {
+                mainContainer.style.display = 'flex';
+                pipContainer.style.display = 'none';
+                pipToggle.textContent = '📺 PiP Mode';
+                document.body.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+            }
+        }
+
         // Update display
         function updateDisplay() {
             const timer = document.getElementById('timer');
             const status = document.getElementById('status');
             const tvTitle = document.getElementById('tvTitle');
+            const pipTimer = document.getElementById('pipTimer');
+            const pipStatus = document.getElementById('pipStatus');
             
-            timer.textContent = formatTime(currentTime);
+            const timeText = formatTime(currentTime);
+            timer.textContent = timeText;
+            pipTimer.textContent = timeText;
             tvTitle.textContent = `PlayStation 3 - TV ${tvId}`;
             
             // Add warning class if time is running low (less than 5 minutes)
             if (currentTime <= 300 && currentTime > 0 && currentStatus === 'active') {
                 timer.className = 'timer warning';
+                pipTimer.className = 'pip-timer warning';
             } else {
                 timer.className = 'timer';
+                pipTimer.className = 'pip-timer';
+            }
+            
+            let statusText;
+            switch(currentStatus) {
+                case 'active':
+                    statusText = 'SEDANG BERMAIN';
+                    break;
+                case 'paused':
+                    statusText = 'DIJEDA';
+                    break;
+                case 'stopped':
+                    statusText = currentTime > 0 ? 'WAKTU HABIS' : 'MENUNGGU';
+                    break;
             }
             
             status.className = `status ${currentStatus}`;
-            switch(currentStatus) {
-                case 'active':
-                    status.textContent = 'SEDANG BERMAIN';
-                    break;
-                case 'paused':
-                    status.textContent = 'DIJEDA';
-                    break;
-                case 'stopped':
-                    status.textContent = currentTime > 0 ? 'WAKTU HABIS' : 'MENUNGGU';
-                    break;
-            }
+            status.textContent = statusText;
+            pipStatus.className = `pip-status ${currentStatus}`;
+            pipStatus.textContent = statusText;
             
             updateLockDisplay();
         }
@@ -231,6 +299,7 @@
                 currentTime = data.remainingTime;
                 currentStatus = data.status;
                 updateDisplay();
+                updateTabTitle();
             }
         });
 
@@ -238,6 +307,7 @@
             if (data.tvId === tvId) {
                 currentTime = data.remainingTime;
                 updateDisplay();
+                updateTabTitle();
             }
         });
         
@@ -248,9 +318,27 @@
             }
         });
 
+        // Browser tab notification
+        function updateTabTitle() {
+            const timeText = formatTime(currentTime);
+            if (currentStatus === 'active') {
+                document.title = `⏰ ${timeText} - PS3 TV ${tvId}`;
+                
+                // Flash tab when time is low
+                if (currentTime <= 300 && currentTime > 0) {
+                    document.title = currentTime % 2 === 0 ? 
+                        `🚨 ${timeText} - WAKTU HABIS!` : 
+                        `⏰ ${timeText} - PS3 TV ${tvId}`;
+                }
+            } else {
+                document.title = `PS3 TV ${tvId} - ${currentStatus.toUpperCase()}`;
+            }
+        }
+
         // Initialize display
         tvId = getTVId();
         updateDisplay();
+        updateTabTitle();
         
         // Prevent right-click and key shortcuts when locked
         document.addEventListener('contextmenu', (e) => {
